@@ -109,20 +109,18 @@ async def update_org(org_id: str, update: OrgUpdate):
         if not await cursor.fetchone():
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        updates = []
-        params = []
+        _ALLOWED_FIELDS = {"name", "description"}
+        field_values = {}
         if update.name is not None:
-            updates.append("name = ?")
-            params.append(update.name)
+            field_values["name"] = update.name
         if update.description is not None:
-            updates.append("description = ?")
-            params.append(update.description)
+            field_values["description"] = update.description
 
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(datetime.utcnow().isoformat())
-            params.append(org_id)
-            await db.execute(f"UPDATE organizations SET {', '.join(updates)} WHERE id = ?", params)
+        if field_values:
+            field_values["updated_at"] = datetime.utcnow().isoformat()
+            set_clause = ", ".join(f"{k} = ?" for k in field_values)
+            params = list(field_values.values()) + [org_id]
+            await db.execute(f"UPDATE organizations SET {set_clause} WHERE id = ?", params)
             await db.commit()
 
         return {"status": "updated"}
@@ -208,20 +206,18 @@ async def update_workspace(org_id: str, ws_id: str, update: WorkspaceUpdate):
         if not await cursor.fetchone():
             raise HTTPException(status_code=404, detail="Workspace not found")
 
-        updates = []
-        params = []
+        _ALLOWED_FIELDS = {"name", "description"}
+        field_values = {}
         if update.name is not None:
-            updates.append("name = ?")
-            params.append(update.name)
+            field_values["name"] = update.name
         if update.description is not None:
-            updates.append("description = ?")
-            params.append(update.description)
+            field_values["description"] = update.description
 
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(datetime.utcnow().isoformat())
-            params.append(ws_id)
-            await db.execute(f"UPDATE workspaces SET {', '.join(updates)} WHERE id = ?", params)
+        if field_values:
+            field_values["updated_at"] = datetime.utcnow().isoformat()
+            set_clause = ", ".join(f"{k} = ?" for k in field_values)
+            params = list(field_values.values()) + [ws_id]
+            await db.execute(f"UPDATE workspaces SET {set_clause} WHERE id = ?", params)
             await db.commit()
 
         return {"status": "updated"}

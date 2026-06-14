@@ -5,8 +5,11 @@ import os
 import signal
 import asyncio
 import threading
+import logging
 from datetime import datetime
 from database import get_db
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -89,13 +92,13 @@ def _drain_pipe(pipe, server_id: str, pipe_name: str):
                 break
             # Optionally log output for debugging
             # print(f"[MCP {server_id}] {pipe_name}: {line.decode('utf-8', errors='replace').strip()}")
-    except Exception:
-        pass  # Drain threads are best-effort; process may already be dead
+    except Exception as e:
+        logger.debug("Drain pipe %s for server %s: %s", pipe_name, server_id, e)
     finally:
         try:
             pipe.close()
-        except Exception:
-            pass  # Pipe may already be closed
+        except Exception as e:
+            logger.debug("Pipe %s close for server %s: %s", pipe_name, server_id, e)
 
 
 async def seed_builtin_mcp_servers():
@@ -288,8 +291,8 @@ async def discover_mcp_tools(server_id: str, org_id: str = None) -> dict:
                         process.kill()
                     except ProcessLookupError:
                         pass  # Process already exited
-                except Exception:
-                    pass  # Ignore other cleanup errors during shutdown
+                except Exception as e:
+                    logger.debug("Cleanup error during shutdown of server %s: %s", server["name"], e)
     finally:
         await db.close()
 
@@ -348,8 +351,8 @@ async def start_mcp_server(server_id: str, org_id: str = None) -> dict:
                 process.stdin.write(_encode_mcp_ndjson(MCP_INIT_REQUEST))
                 process.stdin.write(_encode_mcp_ndjson(MCP_INITIALIZED_NOTIFICATION))
                 process.stdin.flush()
-            except Exception:
-                pass  # best-effort stdin write; drain threads will handle any output
+            except Exception as e:
+                logger.debug("stdin write for server %s: %s", server_id, e)
 
             # Start background threads to drain stdout and stderr
             # This prevents buffer overflow which causes process hangs
@@ -389,8 +392,8 @@ async def stop_mcp_server(server_id: str) -> dict:
             try:
                 if process.stdin and not process.stdin.closed:
                     process.stdin.close()
-            except Exception:
-                pass  # stdin may already be closed by the process
+            except Exception as e:
+                logger.debug("stdin close for server %s: %s", server_id, e)
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             except (ProcessLookupError, OSError):
@@ -403,8 +406,8 @@ async def stop_mcp_server(server_id: str) -> dict:
                 except (ProcessLookupError, OSError):
                     process.kill()
             del _running_processes[server_id]
-        except Exception:
-            pass  # Process may already have been cleaned up
+        except Exception as e:
+            logger.debug("Process cleanup for server %s: %s", server_id, e)
 
     # Clean up reader threads reference (they're daemon threads, so they'll die with process)
     if server_id in _output_readers:

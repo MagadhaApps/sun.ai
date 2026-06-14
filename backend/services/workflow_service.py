@@ -1,12 +1,16 @@
 import json
 import uuid
 import time
+import ast
+import logging
 from datetime import datetime
 from database import get_db
 from services.chat_service import non_stream_chat_completion
 from services.tool_service import execute_tool
 from services.mcp_service import execute_mcp_tool
 from services.agent_service import run_agent
+
+logger = logging.getLogger(__name__)
 
 
 def _clean_azure_base_url(provider_type: str, base_url: str) -> str:
@@ -229,6 +233,7 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
     elif node_type == "conditional":
         expression = node_data.get("expression", "true")
         try:
+            _validate_expression_ast(expression)
             condition_met = bool(eval(expression, {"__builtins__": {"len": len, "str": str, "int": int, "bool": bool, "True": True, "False": False, "None": None}}, {"data": input_data}))
         except Exception:
             condition_met = True
@@ -237,6 +242,7 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
     elif node_type == "transform":
         expression = node_data.get("expression", "data")
         try:
+            _validate_expression_ast(expression)
             result = eval(expression, {"__builtins__": {"len": len, "str": str, "int": int, "float": float, "list": list, "dict": dict, "json": __import__('json'), "True": True, "False": False, "None": None}}, {"data": input_data})
             return {"result": result}
         except Exception as e:
