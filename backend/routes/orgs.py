@@ -106,25 +106,21 @@ async def update_org(org_id: str, update: OrgUpdate):
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM organizations WHERE id = ?", (org_id,))
-        if not await cursor.fetchone():
+        existing = await cursor.fetchone()
+        if not existing:
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        _ALLOWED_FIELDS = {"name", "description"}
-        field_values = {}
-        if update.name is not None:
-            field_values["name"] = update.name
-        if update.description is not None:
-            field_values["description"] = update.description
-
-        if field_values:
-            field_values["updated_at"] = datetime.utcnow().isoformat()
-            # Validate field names against allowlist before building SQL
-            for k in field_values:
-                if k not in _ALLOWED_FIELDS and k != "updated_at":
-                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
-            set_clause = ", ".join(f"{k} = ?" for k in field_values)
-            params = list(field_values.values()) + [org_id]
-            await db.execute(f"UPDATE organizations SET {set_clause} WHERE id = ?", params)
+        if update.name is not None or update.description is not None:
+            now = datetime.utcnow().isoformat()
+            await db.execute(
+                "UPDATE organizations SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+                (
+                    update.name if update.name is not None else existing["name"],
+                    update.description if update.description is not None else existing["description"],
+                    now,
+                    org_id,
+                ),
+            )
             await db.commit()
 
         return {"status": "updated"}
@@ -205,27 +201,23 @@ async def update_workspace(org_id: str, ws_id: str, update: WorkspaceUpdate):
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT id FROM workspaces WHERE id = ? AND org_id = ?", (ws_id, org_id)
+            "SELECT * FROM workspaces WHERE id = ? AND org_id = ?", (ws_id, org_id)
         )
-        if not await cursor.fetchone():
+        existing = await cursor.fetchone()
+        if not existing:
             raise HTTPException(status_code=404, detail="Workspace not found")
 
-        _ALLOWED_FIELDS = {"name", "description"}
-        field_values = {}
-        if update.name is not None:
-            field_values["name"] = update.name
-        if update.description is not None:
-            field_values["description"] = update.description
-
-        if field_values:
-            field_values["updated_at"] = datetime.utcnow().isoformat()
-            # Validate field names against allowlist before building SQL
-            for k in field_values:
-                if k not in _ALLOWED_FIELDS and k != "updated_at":
-                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
-            set_clause = ", ".join(f"{k} = ?" for k in field_values)
-            params = list(field_values.values()) + [ws_id]
-            await db.execute(f"UPDATE workspaces SET {set_clause} WHERE id = ?", params)
+        if update.name is not None or update.description is not None:
+            now = datetime.utcnow().isoformat()
+            await db.execute(
+                "UPDATE workspaces SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+                (
+                    update.name if update.name is not None else existing["name"],
+                    update.description if update.description is not None else existing["description"],
+                    now,
+                    ws_id,
+                ),
+            )
             await db.commit()
 
         return {"status": "updated"}

@@ -183,24 +183,18 @@ async def update_secret(secret_id: str, update: SecretUpdate):
         if not existing:
             raise HTTPException(status_code=404, detail="Secret not found")
 
-        _ALLOWED_FIELDS = {"name", "value_encrypted", "description"}
-        field_values = {}
-        if update.name is not None:
-            field_values["name"] = update.name
-        if update.value is not None:
-            field_values["value_encrypted"] = update.value
-        if update.description is not None:
-            field_values["description"] = update.description
-
-        if field_values:
-            field_values["updated_at"] = datetime.utcnow().isoformat()
-            # Validate field names against allowlist before building SQL
-            for k in field_values:
-                if k not in _ALLOWED_FIELDS and k != "updated_at":
-                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
-            set_clause = ", ".join(f"{k} = ?" for k in field_values)
-            params = list(field_values.values()) + [secret_id]
-            await db.execute(f"UPDATE secrets SET {set_clause} WHERE id = ?", params)
+        if update.name is not None or update.value is not None or update.description is not None:
+            now = datetime.utcnow().isoformat()
+            await db.execute(
+                "UPDATE secrets SET name = ?, value_encrypted = ?, description = ?, updated_at = ? WHERE id = ?",
+                (
+                    update.name if update.name is not None else existing["name"],
+                    update.value if update.value is not None else existing["value_encrypted"],
+                    update.description if update.description is not None else existing["description"],
+                    now,
+                    secret_id,
+                ),
+            )
             await db.commit()
 
         return {"status": "updated"}
