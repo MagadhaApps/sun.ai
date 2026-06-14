@@ -132,24 +132,21 @@ async def update_mcp_server(server_id: str, update: MCPServerUpdate):
                     detail="Built-in servers only allow env and config updates"
                 )
             now = datetime.utcnow().isoformat()
-            updates_sql = []
-            params = []
+            _ALLOWED_FIELDS = {"env", "config", "description"}
+            field_values = {}
             if update.env is not None:
-                updates_sql.append("env = ?")
-                params.append(json.dumps(update.env))
+                field_values["env"] = json.dumps(update.env)
             if update.config is not None:
-                updates_sql.append("config = ?")
-                params.append(json.dumps(update.config))
+                field_values["config"] = json.dumps(update.config)
             if update.description is not None:
-                updates_sql.append("description = ?")
-                params.append(update.description)
-            if not updates_sql:
+                field_values["description"] = update.description
+            if not field_values:
                 return {"id": server_id, "message": "nothing to update"}
-            updates_sql.append("updated_at = ?")
-            params.append(now)
-            params.append(server_id)
+            field_values["updated_at"] = now
+            set_clause = ", ".join(f"{k} = ?" for k in field_values)
+            params = list(field_values.values()) + [server_id]
             await db.execute(
-                f"UPDATE mcp_servers SET {', '.join(updates_sql)} WHERE id = ?",
+                f"UPDATE mcp_servers SET {set_clause} WHERE id = ?",
                 params
             )
         else:

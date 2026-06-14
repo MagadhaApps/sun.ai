@@ -105,16 +105,18 @@ async def get_logs(
 
         where = " AND ".join(conditions) if conditions else "1=1"
 
-        count_cursor = await db.execute(f"SELECT COUNT(*) as cnt FROM observability_logs WHERE {where}", params)
+        count_cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM observability_logs WHERE " + where, params
+        )
         count_row = await count_cursor.fetchone()
         total = count_row["cnt"] if count_row else 0
 
         cursor = await db.execute(
-            f"""SELECT id, type, source, provider_name, model_name, input_tokens, output_tokens,
-                cached_tokens, total_tokens, cost, latency_ms, ttfb_ms, status, error,
-                org_id, workspace_id, created_at
-                FROM observability_logs WHERE {where}
-                ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            "SELECT id, type, source, provider_name, model_name, input_tokens, output_tokens, "
+            "cached_tokens, total_tokens, cost, latency_ms, ttfb_ms, status, error, "
+            "org_id, workspace_id, created_at "
+            "FROM observability_logs WHERE " + where + " "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
             params + [limit, offset]
         )
         rows = await cursor.fetchall()
@@ -158,48 +160,51 @@ async def get_stats(start_date: str = None, end_date: str = None, org_id: str = 
             params.append(end_date)
         where = " AND ".join(conditions) if conditions else "1=1"
 
-        cursor = await db.execute(f"""
-            SELECT
-                COUNT(*) as total_requests,
-                SUM(input_tokens) as total_input_tokens,
-                SUM(output_tokens) as total_output_tokens,
-                SUM(cached_tokens) as total_cached_tokens,
-                SUM(total_tokens) as total_tokens,
-                SUM(cost) as total_cost,
-                AVG(latency_ms) as avg_latency_ms,
-                AVG(ttfb_ms) as avg_ttfb_ms,
-                MIN(latency_ms) as min_latency_ms,
-                MAX(latency_ms) as max_latency_ms,
-                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
-                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count
-            FROM observability_logs WHERE {where}
-        """, params)
+        cursor = await db.execute(
+            "SELECT "
+            "COUNT(*) as total_requests, "
+            "SUM(input_tokens) as total_input_tokens, "
+            "SUM(output_tokens) as total_output_tokens, "
+            "SUM(cached_tokens) as total_cached_tokens, "
+            "SUM(total_tokens) as total_tokens, "
+            "SUM(cost) as total_cost, "
+            "AVG(latency_ms) as avg_latency_ms, "
+            "AVG(ttfb_ms) as avg_ttfb_ms, "
+            "MIN(latency_ms) as min_latency_ms, "
+            "MAX(latency_ms) as max_latency_ms, "
+            "SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count, "
+            "SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count "
+            "FROM observability_logs WHERE " + where,
+            params
+        )
         row = await cursor.fetchone()
         stats = dict(row) if row else {}
 
         # Per-model stats
-        model_cursor = await db.execute(f"""
-            SELECT model_name,
-                COUNT(*) as requests,
-                SUM(total_tokens) as tokens,
-                SUM(cost) as cost,
-                AVG(latency_ms) as avg_latency
-            FROM observability_logs WHERE {where}
-            GROUP BY model_name ORDER BY requests DESC LIMIT 20
-        """, params)
+        model_cursor = await db.execute(
+            "SELECT model_name, "
+            "COUNT(*) as requests, "
+            "SUM(total_tokens) as tokens, "
+            "SUM(cost) as cost, "
+            "AVG(latency_ms) as avg_latency "
+            "FROM observability_logs WHERE " + where + " "
+            "GROUP BY model_name ORDER BY requests DESC LIMIT 20",
+            params
+        )
         model_rows = await model_cursor.fetchall()
         stats["by_model"] = [dict(r) for r in model_rows]
 
         # Per-provider stats
-        prov_cursor = await db.execute(f"""
-            SELECT provider_name,
-                COUNT(*) as requests,
-                SUM(total_tokens) as tokens,
-                SUM(cost) as cost,
-                AVG(latency_ms) as avg_latency
-            FROM observability_logs WHERE {where}
-            GROUP BY provider_name ORDER BY requests DESC
-        """, params)
+        prov_cursor = await db.execute(
+            "SELECT provider_name, "
+            "COUNT(*) as requests, "
+            "SUM(total_tokens) as tokens, "
+            "SUM(cost) as cost, "
+            "AVG(latency_ms) as avg_latency "
+            "FROM observability_logs WHERE " + where + " "
+            "GROUP BY provider_name ORDER BY requests DESC",
+            params
+        )
         prov_rows = await prov_cursor.fetchall()
         stats["by_provider"] = [dict(r) for r in prov_rows]
 
@@ -235,17 +240,18 @@ async def get_timeseries(interval: str = "hour", start_date: str = None, end_dat
             params.append(end_date)
         where = " AND ".join(conditions) if conditions else "1=1"
 
-        cursor = await db.execute(f"""
-            SELECT {group_expr} as time_bucket,
-                COUNT(*) as requests,
-                SUM(total_tokens) as tokens,
-                SUM(cost) as cost,
-                AVG(latency_ms) as avg_latency,
-                SUM(input_tokens) as input_tokens,
-                SUM(output_tokens) as output_tokens
-            FROM observability_logs WHERE {where}
-            GROUP BY time_bucket ORDER BY time_bucket
-        """, params)
+        cursor = await db.execute(
+            "SELECT " + group_expr + " as time_bucket, "
+            "COUNT(*) as requests, "
+            "SUM(total_tokens) as tokens, "
+            "SUM(cost) as cost, "
+            "AVG(latency_ms) as avg_latency, "
+            "SUM(input_tokens) as input_tokens, "
+            "SUM(output_tokens) as output_tokens "
+            "FROM observability_logs WHERE " + where + " "
+            "GROUP BY time_bucket ORDER BY time_bucket",
+            params
+        )
         rows = await cursor.fetchall()
         return {"data": [dict(r) for r in rows], "interval": interval}
     finally:

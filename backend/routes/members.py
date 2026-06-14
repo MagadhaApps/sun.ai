@@ -129,24 +129,23 @@ async def update_member(org_id: str, user_email: str, update: MemberUpdate, x_us
                 if owner_count['count'] <= 1:
                     raise HTTPException(status_code=400, detail="Cannot demote the last owner of the organization")
 
-        fields = []
-        values = []
+        _ALLOWED_FIELDS = {"role", "status"}
+        field_values = {}
         if update.role:
             if update.role not in ['owner', 'admin', 'member', 'viewer']:
                 raise HTTPException(status_code=400, detail="Invalid role")
-            fields.append("role = ?")
-            values.append(update.role)
+            field_values["role"] = update.role
         if update.status:
-            fields.append("status = ?")
-            values.append(update.status)
+            field_values["status"] = update.status
             
-        if not fields:
+        if not field_values:
             return {"status": "success"}
             
-        fields.append("updated_at = ?")
-        values.append(now)
+        field_values["updated_at"] = now
+        set_clause = ", ".join(f"{k} = ?" for k in field_values)
+        values = list(field_values.values())
         
-        query = f"UPDATE organization_members SET {', '.join(fields)} WHERE org_id = ? AND user_email = ?"
+        query = f"UPDATE organization_members SET {set_clause} WHERE org_id = ? AND user_email = ?"
         values.extend([org_id, user_email])
         
         await db.execute(query, tuple(values))

@@ -22,13 +22,13 @@ async def search_knowledge(kb_ids: list, query: str, limit: int = 5) -> str:
         
         # Perform cosine similarity search (<=>)
         # Assuming embedding vector(1536)
-        sql = f"""
-            SELECT title, content, 1 - (embedding <=> ?::vector) as similarity
-            FROM knowledge_documents
-            WHERE kb_id IN ({placeholders})
-            ORDER BY embedding <=> ?::vector
-            LIMIT ?
-        """
+        sql = (
+            "SELECT title, content, 1 - (embedding <=> ?::vector) as similarity "
+            "FROM knowledge_documents "
+            "WHERE kb_id IN (" + placeholders + ") "
+            "ORDER BY embedding <=> ?::vector "
+            "LIMIT ?"
+        )
         # Wait, the parameter binding for vector distance in Databases requires slightly careful typing
         # Let's adjust query to use explicit cast if needed, or rely on execution parsing.
         # Actually Databases parameters are named, execute_query translates "?" to positional.

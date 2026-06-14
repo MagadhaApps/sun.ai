@@ -183,23 +183,20 @@ async def update_secret(secret_id: str, update: SecretUpdate):
         if not existing:
             raise HTTPException(status_code=404, detail="Secret not found")
 
-        updates = []
-        params = []
+        _ALLOWED_FIELDS = {"name", "value_encrypted", "description"}
+        field_values = {}
         if update.name is not None:
-            updates.append("name = ?")
-            params.append(update.name)
+            field_values["name"] = update.name
         if update.value is not None:
-            updates.append("value_encrypted = ?")
-            params.append(update.value)
+            field_values["value_encrypted"] = update.value
         if update.description is not None:
-            updates.append("description = ?")
-            params.append(update.description)
+            field_values["description"] = update.description
 
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(datetime.utcnow().isoformat())
-            params.append(secret_id)
-            await db.execute(f"UPDATE secrets SET {', '.join(updates)} WHERE id = ?", params)
+        if field_values:
+            field_values["updated_at"] = datetime.utcnow().isoformat()
+            set_clause = ", ".join(f"{k} = ?" for k in field_values)
+            params = list(field_values.values()) + [secret_id]
+            await db.execute(f"UPDATE secrets SET {set_clause} WHERE id = ?", params)
             await db.commit()
 
         return {"status": "updated"}
