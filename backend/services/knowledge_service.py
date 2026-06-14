@@ -16,7 +16,17 @@ async def search_knowledge(kb_ids: list, query: str, limit: int = 5) -> str:
         query_embedding = response.data[0]["embedding"]
         embedding_val = f"[{','.join(map(str, query_embedding))}]"
         
-        # Build IN clause for kb_ids
+        # Validate kb_ids before building query
+        if not kb_ids or not isinstance(kb_ids, list):
+            return "No knowledge bases specified."
+        # Ensure all kb_ids are valid strings to prevent injection
+        import re
+        _id_pat = re.compile(r'^[a-zA-Z0-9_\-]+$')
+        for kid in kb_ids:
+            if not isinstance(kid, str) or not _id_pat.match(kid):
+                return f"Invalid knowledge base ID: {kid}"
+
+        # Build IN clause placeholders safely
         placeholders = ", ".join("?" for _ in kb_ids)
         params = [embedding_val] + kb_ids + [limit]
         
@@ -29,10 +39,6 @@ async def search_knowledge(kb_ids: list, query: str, limit: int = 5) -> str:
             "ORDER BY embedding <=> ?::vector "
             "LIMIT ?"
         )
-        # Wait, the parameter binding for vector distance in Databases requires slightly careful typing
-        # Let's adjust query to use explicit cast if needed, or rely on execution parsing.
-        # Actually Databases parameters are named, execute_query translates "?" to positional.
-        # However, the embedding in ORDER BY needs the same parameter.
         params = [embedding_val] + kb_ids + [embedding_val, limit]
         
         cursor = await db.execute(sql, tuple(params))

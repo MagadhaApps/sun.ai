@@ -320,6 +320,14 @@ async def _exec_http_request(params: dict) -> dict:
 async def _exec_code(params: dict) -> dict:
     code = params.get("code", "")
     timeout = params.get("timeout", 30)
+    # Validate code is syntactically valid Python before execution
+    try:
+        ast.parse(code, mode='exec')
+    except SyntaxError as e:
+        return {"error": f"Invalid Python syntax: {str(e)}"}
+    # Reject empty or whitespace-only code
+    if not code.strip():
+        return {"error": "Code must not be empty"}
     try:
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -358,12 +366,15 @@ async def _exec_json_transform(params: dict) -> dict:
         for node in ast.walk(tree):
             if type(node) not in _SAFE_AST_NODES:
                 return {"error": "Unsafe expression: forbidden construct"}
+            # Block attribute access to dunder methods (e.g., __class__, __bases__)
+            if isinstance(node, ast.Attribute) and isinstance(node.attr, str) and node.attr.startswith('_'):
+                return {"error": "Unsafe expression: access to private attributes is forbidden"}
         restricted_builtins = {
             "len": len, "str": str, "int": int, "float": float,
             "list": list, "dict": dict, "sorted": sorted, "filter": filter,
             "map": map, "sum": sum, "min": min, "max": max,
-            "enumerate": enumerate, "zip": zip, "range": range, "type": type,
-            "isinstance": isinstance, "bool": bool,
+            "enumerate": enumerate, "zip": zip, "range": range,
+            "bool": bool,
             "True": True, "False": False, "None": None
         }
         result = eval(expression, {"__builtins__": restricted_builtins}, {"data": data})
@@ -509,6 +520,11 @@ async def _exec_shell(params: dict) -> dict:
     command = params.get("command", "")
     timeout = params.get("timeout", 30)
     cwd = params.get("cwd", ".")
+    # Validate command is non-empty and cwd is a string
+    if not command or not isinstance(command, str) or not command.strip():
+        return {"error": "Command must be a non-empty string"}
+    if not isinstance(cwd, str):
+        return {"error": "cwd must be a string"}
     try:
         import shlex
         result = subprocess.run(
@@ -590,92 +606,90 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     environment_id = context.get("environment_id") or "default-env"
     org_id = context.get("org_id") or "default-org"
 
-    # Validate IDs to prevent injection via context
+    # Validate inputs before constructing code
+    if not code or not isinstance(code, str) or not code.strip():
+        return {"error": "Tool code must be a non-empty string"}
+    try:
+        ast.parse(code, mode='exec')
+    except SyntaxError as e:
+        return {"error": f"Invalid Python syntax in tool code: {str(e)}"}
+
+    # Validate identifiers to prevent injection into the generated code
     import re
     _ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
     if not _ID_RE.match(workspace_id) or not _ID_RE.match(environment_id) or not _ID_RE.match(org_id):
         return {"error": "Invalid context identifiers"}
 
-    # Path to the database file
+    # Path to the database file - resolve securely
     db_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "agentic_platform.db")
 
     # Build the get_secret helper code that will be injected into the subprocess
-    get_secret_code = f'''
-def get_secret(secret_name):
-    """
-    Get a secret value by name. Searches in order:
-    1. Workspace scope (highest priority)
-    2. Environment scope
-    3. Organization scope (lowest priority)
-    Raises ValueError if secret not found or no access.
-    """
-    import sqlite3
+    # Use repr() to safely escape all values for Python source embedding
+    get_secret_code = (
+        "def get_secret(secret_name):\n"
+        "    \"\"\"\n"
+        "    Get a secret value by name. Searches in order:\n"
+        "    1. Workspace scope (highest priority)\n"
+        "    2. Environment scope\n"
+        "    3. Organization scope (lowest priority)\n"
+        "    Raises ValueError if secret not found or no access.\n"
+        "    \"\"\"\n"
+        "    import sqlite3\n"
+        "    db_path = " + repr(db_path) + "\n"
+        "    workspace_id = " + repr(workspace_id) + "\n"
+        "    environment_id = " + repr(environment_id) + "\n"
+        "    org_id = " + repr(org_id) + "\n"
+        "    conn = sqlite3.connect(db_path)\n"
+        "    cursor = conn.cursor()\n"
+        "    if workspace_id:\n"
+        "        cursor.execute(\n"
+        "            \"SELECT org_id, env_id FROM workspaces WHERE id = ?\",\n"
+        "            (workspace_id,)\n"
+        "        )\n"
+        "        ws_row = cursor.fetchone()\n"
+        "        if ws_row:\n"
+        "            org_id = ws_row[0] or org_id\n"
+        "            environment_id = ws_row[1] or environment_id\n"
+        "    scopes_to_try = []\n"
+        "    if workspace_id:\n"
+        "        scopes_to_try.append((\"workspace\", workspace_id))\n"
+        "    if environment_id:\n"
+        "        scopes_to_try.append((\"env\", environment_id))\n"
+        "    if org_id:\n"
+        "        scopes_to_try.append((\"org\", org_id))\n"
+        "    for scope_type, scope_id in scopes_to_try:\n"
+        "        cursor.execute(\n"
+        "            \"SELECT value_encrypted FROM secrets WHERE name = ? AND scope_type = ? AND scope_id = ?\",\n"
+        "            (secret_name, scope_type, scope_id)\n"
+        "        )\n"
+        "        row = cursor.fetchone()\n"
+        "        if row:\n"
+        "            conn.close()\n"
+        "            return row[0]\n"
+        "    conn.close()\n"
+        "    checked_scopes = []\n"
+        "    if workspace_id:\n"
+        "        checked_scopes.append(\"workspace '\" + str(workspace_id) + \"'\")\n"
+        "    if environment_id:\n"
+        "        checked_scopes.append(\"environment '\" + str(environment_id) + \"'\")\n"
+        "    if org_id:\n"
+        "        checked_scopes.append(\"organization '\" + str(org_id) + \"'\")\n"
+        "    if checked_scopes:\n"
+        "        raise ValueError(\"Secret '\" + secret_name + \"' not found in: \" + \", \".join(checked_scopes))\n"
+        "    else:\n"
+        "        raise ValueError(\"Secret '\" + secret_name + \"' not found - no scope context available\")\n"
+    )
 
-    db_path = {repr(db_path)}
-    workspace_id = {repr(workspace_id)}
-    environment_id = {repr(environment_id)}
-    org_id = {repr(org_id)}
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    # If we have a workspace_id, resolve its env_id and org_id for inheritance
-    if workspace_id:
-        cursor.execute(
-            "SELECT org_id, env_id FROM workspaces WHERE id = ?",
-            (workspace_id,)
-        )
-        ws_row = cursor.fetchone()
-        if ws_row:
-            org_id = ws_row[0] or org_id
-            environment_id = ws_row[1] or environment_id
-
-    # Try scopes in priority order: workspace -> environment -> organization
-    scopes_to_try = []
-    if workspace_id:
-        scopes_to_try.append(("workspace", workspace_id))
-    if environment_id:
-        scopes_to_try.append(("env", environment_id))
-    if org_id:
-        scopes_to_try.append(("org", org_id))
-
-    for scope_type, scope_id in scopes_to_try:
-        cursor.execute(
-            "SELECT value_encrypted FROM secrets WHERE name = ? AND scope_type = ? AND scope_id = ?",
-            (secret_name, scope_type, scope_id)
-        )
-        row = cursor.fetchone()
-        if row:
-            conn.close()
-            return row[0]
-
-    conn.close()
-
-    # Build helpful error message about which scopes were checked
-    checked_scopes = []
-    if workspace_id:
-        checked_scopes.append(f"workspace '{{workspace_id}}'")
-    if environment_id:
-        checked_scopes.append(f"environment '{{environment_id}}'")
-    if org_id:
-        checked_scopes.append(f"organization '{{org_id}}'")
-
-    if checked_scopes:
-        raise ValueError(f"Secret '{{secret_name}}' not found in: {{', '.join(checked_scopes)}}")
-    else:
-        raise ValueError(f"Secret '{{secret_name}}' not found - no scope context available")
-'''
-
-    full_code = f"""
-import json, sys
-{get_secret_code}
-params = json.loads('''{json.dumps(parameters)}''')
-{code}
-if 'result' in dir():
-    print(json.dumps({{"result": result}}))
-elif 'output' in dir():
-    print(json.dumps({{"result": output}}))
-"""
+    full_code = (
+        "import json, sys\n"
+        + get_secret_code + "\n"
+        "params = json.loads('''" + json.dumps(parameters) + "''')\n"
+        + code + "\n"
+        "if 'result' in dir():\n"
+        "    print(json.dumps({\"result\": result}))\n"
+        "elif 'output' in dir():\n"
+        "    print(json.dumps({\"result\": output}))\n"
+    )
     try:
         result = subprocess.run(
             [sys.executable, "-c", full_code],

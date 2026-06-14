@@ -6,6 +6,7 @@ import signal
 import asyncio
 import threading
 import logging
+import re
 from datetime import datetime
 from database import get_db
 
@@ -323,6 +324,16 @@ async def start_mcp_server(server_id: str, org_id: str = None) -> dict:
         args = json.loads(server.get("args", "[]"))
         env = {**os.environ, **resolved_env}
 
+        # Validate command and args to prevent injection
+        if not command or not isinstance(command, str):
+            return {"error": "Invalid command: must be a non-empty string"}
+        # Only allow alphanumeric, dash, underscore, dot, slash, and space in command path
+        if not re.match(r'^[a-zA-Z0-9_\-./\\ ]+$', command):
+            return {"error": "Invalid command: contains disallowed characters"}
+        for arg in args:
+            if not isinstance(arg, str):
+                return {"error": "Invalid args: all args must be strings"}
+
         backend_dir = os.path.dirname(os.path.dirname(__file__))
         full_args = [command] + args
 
@@ -619,9 +630,9 @@ async def _execute_via_mcp_subprocess(server_id: str, server: dict, tool_name: s
                         if not line:
                             break
                 except asyncio.CancelledError:
-                    pass  # Task was cancelled during shutdown
-                except Exception:
-                    pass  # Ignore other drain errors
+                    logger.debug("Stderr drain task cancelled for server %s during shutdown", server_id)
+                except Exception as e:
+                    logger.debug("Non-critical error draining stderr for server %s: %s", server_id, e)
 
             state["stderr_task"] = asyncio.create_task(_stderr_drain(process.stderr))
 

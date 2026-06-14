@@ -558,6 +558,10 @@ async def _run_migrations(db):
     # Backfill any rows missing workspace_id
     ALLOWED_BACKFILL_TABLES = {"tools", "mcp_servers", "runbooks", "workflows", "agents", "conversations"}
     for table in ALLOWED_BACKFILL_TABLES:
+        # Explicitly validate table name against allowlist before interpolation
+        if table not in ALLOWED_BACKFILL_TABLES:
+            logger.error("Rejected disallowed backfill table: %s", table)
+            continue
         await execute_query(db, f"UPDATE {table} SET workspace_id = ? WHERE workspace_id IS NULL", (DEFAULT_WS_ID,), fetch="execute")
 
     # For providers, set org_id based on workspace's org_id, or default org

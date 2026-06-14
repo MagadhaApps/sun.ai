@@ -12,6 +12,31 @@ from services.agent_service import run_agent
 
 logger = logging.getLogger(__name__)
 
+# Safe AST node types for expression evaluation
+_SAFE_AST_NODES = {
+    ast.Expression, ast.Constant, ast.Name, ast.Load, ast.BinOp, ast.UnaryOp,
+    ast.BoolOp, ast.Compare, ast.Call, ast.Attribute, ast.Subscript,
+    ast.List, ast.Tuple, ast.Dict, ast.Set, ast.ListComp, ast.DictComp,
+    ast.SetComp, ast.comprehension, ast.Slice,
+    ast.IfExp, ast.Num, ast.Str, ast.Bytes, ast.NameConstant,
+    ast.JoinedStr, ast.FormattedValue, ast.keyword, ast.arg,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow, ast.FloorDiv,
+    ast.MatMult, ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd,
+    ast.And, ast.Or, ast.Not, ast.Invert, ast.UAdd, ast.USub,
+    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot,
+    ast.In, ast.NotIn
+}
+
+def _validate_expression_ast(expression: str):
+    """Validate that an expression AST contains only safe node types and no private attribute access."""
+    tree = ast.parse(expression, mode='eval')
+    for node in ast.walk(tree):
+        if type(node) not in _SAFE_AST_NODES:
+            raise ValueError(f"Unsafe expression: forbidden construct {type(node).__name__}")
+        # Block attribute access to dunder methods (e.g., __class__, __bases__)
+        if isinstance(node, ast.Attribute) and isinstance(node.attr, str) and node.attr.startswith('_'):
+            raise ValueError("Unsafe expression: access to private attributes is forbidden")
+
 
 def _clean_azure_base_url(provider_type: str, base_url: str) -> str:
     if provider_type != "azure" or not base_url:
@@ -234,8 +259,14 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
         expression = node_data.get("expression", "true")
         try:
             _validate_expression_ast(expression)
-            condition_met = bool(eval(expression, {"__builtins__": {"len": len, "str": str, "int": int, "bool": bool, "True": True, "False": False, "None": None}}, {"data": input_data}))
-        except Exception:
+            safe_builtins = {
+                "len": len, "str": str, "int": int, "float": float,
+                "bool": bool, "list": list, "dict": dict,
+                "True": True, "False": False, "None": None
+            }
+            condition_met = bool(eval(expression, {"__builtins__": safe_builtins}, {"data": input_data}))
+        except Exception as e:
+            logger.debug("Conditional expression evaluation failed: %s", e)
             condition_met = True
         return {"condition_met": condition_met, "data": input_data}
 
@@ -243,7 +274,12 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
         expression = node_data.get("expression", "data")
         try:
             _validate_expression_ast(expression)
-            result = eval(expression, {"__builtins__": {"len": len, "str": str, "int": int, "float": float, "list": list, "dict": dict, "json": __import__('json'), "True": True, "False": False, "None": None}}, {"data": input_data})
+            safe_builtins = {
+                "len": len, "str": str, "int": int, "float": float,
+                "list": list, "dict": dict, "bool": bool,
+                "True": True, "False": False, "None": None
+            }
+            result = eval(expression, {"__builtins__": safe_builtins, "json": __import__('json')}, {"data": input_data})
             return {"result": result}
         except Exception as e:
             return {"error": str(e)}

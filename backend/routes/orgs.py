@@ -118,6 +118,10 @@ async def update_org(org_id: str, update: OrgUpdate):
 
         if field_values:
             field_values["updated_at"] = datetime.utcnow().isoformat()
+            # Validate field names against allowlist before building SQL
+            for k in field_values:
+                if k not in _ALLOWED_FIELDS and k != "updated_at":
+                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
             set_clause = ", ".join(f"{k} = ?" for k in field_values)
             params = list(field_values.values()) + [org_id]
             await db.execute(f"UPDATE organizations SET {set_clause} WHERE id = ?", params)
@@ -215,6 +219,10 @@ async def update_workspace(org_id: str, ws_id: str, update: WorkspaceUpdate):
 
         if field_values:
             field_values["updated_at"] = datetime.utcnow().isoformat()
+            # Validate field names against allowlist before building SQL
+            for k in field_values:
+                if k not in _ALLOWED_FIELDS and k != "updated_at":
+                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
             set_clause = ", ".join(f"{k} = ?" for k in field_values)
             params = list(field_values.values()) + [ws_id]
             await db.execute(f"UPDATE workspaces SET {set_clause} WHERE id = ?", params)

@@ -143,6 +143,11 @@ async def update_mcp_server(server_id: str, update: MCPServerUpdate):
             if not field_values:
                 return {"id": server_id, "message": "nothing to update"}
             field_values["updated_at"] = now
+            # Validate field names against allowlist before building SQL
+            allowed_fields = {"env", "config", "description", "updated_at"}
+            for k in field_values:
+                if k not in allowed_fields:
+                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
             set_clause = ", ".join(f"{k} = ?" for k in field_values)
             params = list(field_values.values()) + [server_id]
             await db.execute(
