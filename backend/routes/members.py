@@ -142,6 +142,10 @@ async def update_member(org_id: str, user_email: str, update: MemberUpdate, x_us
             return {"status": "success"}
             
         field_values["updated_at"] = now
+        # Validate field names against allowlist before building SQL
+        for k in field_values:
+            if k not in _ALLOWED_FIELDS and k != "updated_at":
+                raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
         set_clause = ", ".join(f"{k} = ?" for k in field_values)
         values = list(field_values.values())
         

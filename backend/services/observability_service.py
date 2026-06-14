@@ -75,33 +75,36 @@ async def get_logs(
 ):
     db = await get_db()
     try:
+        # Build WHERE clause from allowed condition templates
+        # Each condition template maps a parameter to its SQL fragment; all fragments
+        # use ? placeholders and are validated against a known set of column names.
+        _ALLOWED_COLUMNS = {"org_id", "workspace_id", "source", "provider_id",
+                            "model_id", "status", "created_at"}
         conditions = []
         params = []
 
+        def _add_condition(column: str, op: str, value):
+            if column not in _ALLOWED_COLUMNS:
+                raise ValueError(f"Invalid filter column: {column}")
+            conditions.append(f"{column} {op} ?")
+            params.append(value)
+
         if org_id:
-            conditions.append("org_id = ?")
-            params.append(org_id)
+            _add_condition("org_id", "=", org_id)
         if workspace_id:
-            conditions.append("workspace_id = ?")
-            params.append(workspace_id)
+            _add_condition("workspace_id", "=", workspace_id)
         if source:
-            conditions.append("source = ?")
-            params.append(source)
+            _add_condition("source", "=", source)
         if provider_id:
-            conditions.append("provider_id = ?")
-            params.append(provider_id)
+            _add_condition("provider_id", "=", provider_id)
         if model_id:
-            conditions.append("model_id = ?")
-            params.append(model_id)
+            _add_condition("model_id", "=", model_id)
         if status:
-            conditions.append("status = ?")
-            params.append(status)
+            _add_condition("status", "=", status)
         if start_date:
-            conditions.append("created_at >= ?")
-            params.append(start_date)
+            _add_condition("created_at", ">=", start_date)
         if end_date:
-            conditions.append("created_at <= ?")
-            params.append(end_date)
+            _add_condition("created_at", "<=", end_date)
 
         where = " AND ".join(conditions) if conditions else "1=1"
 
@@ -146,18 +149,20 @@ async def get_stats(start_date: str = None, end_date: str = None, org_id: str = 
     try:
         conditions = []
         params = []
+        _ALLOWED_COLUMNS = {"org_id", "workspace_id", "created_at"}
+        def _add_cond(col, op, val):
+            if col not in _ALLOWED_COLUMNS:
+                raise ValueError(f"Invalid filter column: {col}")
+            conditions.append(f"{col} {op} ?")
+            params.append(val)
         if org_id:
-            conditions.append("org_id = ?")
-            params.append(org_id)
+            _add_cond("org_id", "=", org_id)
         if workspace_id:
-            conditions.append("workspace_id = ?")
-            params.append(workspace_id)
+            _add_cond("workspace_id", "=", workspace_id)
         if start_date:
-            conditions.append("created_at >= ?")
-            params.append(start_date)
+            _add_cond("created_at", ">=", start_date)
         if end_date:
-            conditions.append("created_at <= ?")
-            params.append(end_date)
+            _add_cond("created_at", "<=", end_date)
         where = " AND ".join(conditions) if conditions else "1=1"
 
         cursor = await db.execute(
@@ -217,27 +222,29 @@ async def get_timeseries(interval: str = "hour", start_date: str = None, end_dat
                          org_id: str = None, workspace_id: str = None):
     db = await get_db()
     try:
-        if interval == "hour":
-            group_expr = "strftime('%Y-%m-%dT%H:00:00', created_at)"
-        elif interval == "day":
-            group_expr = "strftime('%Y-%m-%d', created_at)"
-        else:
-            group_expr = "strftime('%Y-%m-%dT%H:00:00', created_at)"
+        # Validate interval against allowed values and map to safe SQL expressions
+        _ALLOWED_INTERVALS = {
+            "hour": "strftime('%Y-%m-%dT%H:00:00', created_at)",
+            "day": "strftime('%Y-%m-%d', created_at)",
+        }
+        group_expr = _ALLOWED_INTERVALS.get(interval, _ALLOWED_INTERVALS["hour"])
 
         conditions = []
         params = []
+        _ALLOWED_COLUMNS = {"org_id", "workspace_id", "created_at"}
+        def _add_cond(col, op, val):
+            if col not in _ALLOWED_COLUMNS:
+                raise ValueError(f"Invalid filter column: {col}")
+            conditions.append(f"{col} {op} ?")
+            params.append(val)
         if org_id:
-            conditions.append("org_id = ?")
-            params.append(org_id)
+            _add_cond("org_id", "=", org_id)
         if workspace_id:
-            conditions.append("workspace_id = ?")
-            params.append(workspace_id)
+            _add_cond("workspace_id", "=", workspace_id)
         if start_date:
-            conditions.append("created_at >= ?")
-            params.append(start_date)
+            _add_cond("created_at", ">=", start_date)
         if end_date:
-            conditions.append("created_at <= ?")
-            params.append(end_date)
+            _add_cond("created_at", "<=", end_date)
         where = " AND ".join(conditions) if conditions else "1=1"
 
         cursor = await db.execute(

@@ -85,6 +85,11 @@ async def update_environment(org_id: str, env_id: str, update: EnvUpdate, auth: 
 
         if field_values:
             field_values["updated_at"] = datetime.utcnow().isoformat()
+            # Validate field names against allowlist before building SQL
+            allowed_fields = {"name", "description", "updated_at"}
+            for k in field_values:
+                if k not in allowed_fields:
+                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
             set_clause = ", ".join(f"{k} = ?" for k in field_values)
             params = list(field_values.values()) + [env_id]
             await db.execute(f"UPDATE environments SET {set_clause} WHERE id = ?", params)

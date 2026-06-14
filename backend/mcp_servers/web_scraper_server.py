@@ -2,9 +2,10 @@
 """Built-in MCP Server: Web Scraper"""
 import json
 import sys
-import urllib.request
 import re
+import httpx
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 
 class TextExtractor(HTMLParser):
@@ -41,16 +42,27 @@ def handle_request(method, params):
         return {"error": "URL is required"}
 
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AgenticPlatform/1.0"
-        })
-        # Validate URL scheme to prevent file:// or other dangerous schemes
-        from urllib.parse import urlparse
+        # Validate URL scheme and hostname to prevent SSRF
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return {"error": f"Unsupported URL scheme: {parsed.scheme}"}
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+        if not parsed.hostname:
+            return {"error": "Invalid URL: no hostname"}
+        # Block internal/private hosts
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(parsed.hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast:
+                return {"error": "Access to internal/private hosts is not allowed"}
+        except ValueError:
+            pass  # Not an IP address, proceed with hostname
+
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            resp = client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AgenticPlatform/1.0"
+            })
+            resp.raise_for_status()
+            html = resp.text
     except Exception as e:
         return {"error": f"Failed to fetch URL: {str(e)}"}
 
