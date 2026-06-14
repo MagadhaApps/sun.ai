@@ -38,6 +38,163 @@ def _validate_expression_ast(expression: str):
             raise ValueError("Unsafe expression: access to private attributes is forbidden")
 
 
+def _safe_eval_expression(expression: str, safe_builtins: dict, local_vars: dict):
+    """Evaluate an expression via AST walking — no exec/eval used.
+    The expression AST must pass _validate_expression_ast first."""
+    tree = ast.parse(expression, mode='eval')
+    _validate_expression_ast(expression)
+
+    def _eval_node(node, loc):
+        """Recursively evaluate a safe AST node."""
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Num):
+            return node.n
+        if isinstance(node, ast.Str):
+            return node.s
+        if isinstance(node, ast.Bytes):
+            return node.s
+        if isinstance(node, ast.NameConstant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id in loc:
+                return loc[node.id]
+            if node.id in safe_builtins:
+                return safe_builtins[node.id]
+            raise NameError(f"name '{node.id}' is not defined")
+        if isinstance(node, ast.List):
+            return [_eval_node(el, loc) for el in node.elts]
+        if isinstance(node, ast.Tuple):
+            return tuple(_eval_node(el, loc) for el in node.elts)
+        if isinstance(node, ast.Dict):
+            return {_eval_node(k, loc): _eval_node(v, loc) for k, v in zip(node.keys, node.values)}
+        if isinstance(node, ast.Set):
+            return {_eval_node(el, loc) for el in node.elts}
+        if isinstance(node, ast.Subscript):
+            obj = _eval_node(node.value, loc)
+            slc = _eval_node(node.slice, loc)
+            return obj[slc]
+        if isinstance(node, ast.Index):
+            return _eval_node(node.value, loc)
+        if isinstance(node, ast.Slice):
+            lower = _eval_node(node.lower, loc) if node.lower else None
+            upper = _eval_node(node.upper, loc) if node.upper else None
+            step = _eval_node(node.step, loc) if node.step else None
+            return slice(lower, upper, step)
+        if isinstance(node, ast.Attribute):
+            obj = _eval_node(node.value, loc)
+            return getattr(obj, node.attr)
+        if isinstance(node, ast.Call):
+            func = _eval_node(node.func, loc)
+            args = [_eval_node(a, loc) for a in node.args]
+            kwargs = {kw.arg: _eval_node(kw.value, loc) for kw in node.keywords}
+            return func(*args, **kwargs)
+        if isinstance(node, ast.BinOp):
+            left = _eval_node(node.left, loc)
+            right = _eval_node(node.right, loc)
+            op_map = {
+                ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+                ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
+                ast.Mod: lambda a, b: a % b, ast.Pow: lambda a, b: a ** b,
+                ast.FloorDiv: lambda a, b: a // b, ast.MatMult: lambda a, b: a @ b,
+                ast.LShift: lambda a, b: a << b, ast.RShift: lambda a, b: a >> b,
+                ast.BitOr: lambda a, b: a | b, ast.BitXor: lambda a, b: a ^ b,
+                ast.BitAnd: lambda a, b: a & b,
+            }
+            return op_map[type(node.op)](left, right)
+        if isinstance(node, ast.UnaryOp):
+            operand = _eval_node(node.operand, loc)
+            op_map = {
+                ast.Not: lambda a: not a, ast.Invert: lambda a: ~a,
+                ast.UAdd: lambda a: +a, ast.USub: lambda a: -a,
+            }
+            return op_map[type(node.op)](operand)
+        if isinstance(node, ast.BoolOp):
+            values = [_eval_node(v, loc) for v in node.values]
+            if isinstance(node.op, ast.And):
+                return all(values)
+            if isinstance(node.op, ast.Or):
+                return any(values)
+        if isinstance(node, ast.Compare):
+            left = _eval_node(node.left, loc)
+            for op, comp in zip(node.ops, node.comparators):
+                right = _eval_node(comp, loc)
+                cmp_map = {
+                    ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b,
+                    ast.Lt: lambda a, b: a < b, ast.LtE: lambda a, b: a <= b,
+                    ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b,
+                    ast.Is: lambda a, b: a is b, ast.IsNot: lambda a, b: a is not b,
+                    ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+                }
+                if not cmp_map[type(op)](left, right):
+                    return False
+                left = right
+            return True
+        if isinstance(node, ast.IfExp):
+            test = _eval_node(node.test, loc)
+            return _eval_node(node.body if test else node.orelse, loc)
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(str(v.value))
+                elif isinstance(v, ast.Str):
+                    parts.append(v.s)
+                elif isinstance(v, ast.FormattedValue):
+                    val = _eval_node(v.value, loc)
+                    parts.append(str(val))
+                else:
+                    parts.append(str(_eval_node(v, loc)))
+            return ''.join(parts)
+        if isinstance(node, ast.ListComp):
+            result = []
+            _eval_comprehension(node, loc, safe_builtins, _eval_node, result.append)
+            return result
+        if isinstance(node, ast.DictComp):
+            result = {}
+            _eval_comprehension(node, loc, safe_builtins, _eval_node, lambda kv: result.update({kv[0]: kv[1]}))
+            return result
+        if isinstance(node, ast.SetComp):
+            result = set()
+            _eval_comprehension(node, loc, safe_builtins, _eval_node, result.add)
+            return result
+        raise ValueError(f"Unsupported AST node: {type(node).__name__}")
+
+    def _eval_comprehension(comp, loc, builtins, eval_node_fn, collector):
+        """Evaluate a comprehension (list/dict/set)."""
+        def _step(gen_idx, current_loc):
+            if gen_idx >= len(comp.generators):
+                if isinstance(comp, ast.DictComp):
+                    collector((eval_node_fn(comp.key, current_loc), eval_node_fn(comp.value, current_loc)))
+                else:
+                    collector(eval_node_fn(comp.elt, current_loc))
+                return
+            gen = comp.generators[gen_idx]
+            iterable = eval_node_fn(gen.iter, current_loc)
+            for item in iterable:
+                new_loc = dict(current_loc)
+                if isinstance(gen.target, ast.Name):
+                    new_loc[gen.target.id] = item
+                elif isinstance(gen.target, ast.Tuple):
+                    for i, elt in enumerate(gen.target.elts):
+                        if isinstance(elt, ast.Name):
+                            new_loc[elt.id] = item[i]
+                        else:
+                            new_loc['_'] = item
+                else:
+                    new_loc['_'] = item
+                ok = True
+                for if_clause in gen.ifs:
+                    if not eval_node_fn(if_clause, new_loc):
+                        ok = False
+                        break
+                if ok:
+                    _step(gen_idx + 1, new_loc)
+        _step(0, dict(loc))
+
+    return _eval_node(tree.body, local_vars)
+
+
 def _clean_azure_base_url(provider_type: str, base_url: str) -> str:
     if provider_type != "azure" or not base_url:
         return base_url
@@ -258,14 +415,13 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
     elif node_type == "conditional":
         expression = node_data.get("expression", "true")
         try:
-            _validate_expression_ast(expression)
             safe_builtins = {
                 "len": len, "str": str, "int": int, "float": float,
                 "bool": bool, "list": list, "dict": dict,
                 "True": True, "False": False, "None": None
             }
-            # Safe eval: AST validated above, restricted builtins deny __builtins__ escape
-            condition_met = bool(eval(expression, {"__builtins__": safe_builtins}, {"data": input_data}))
+            # AST-walking expression evaluator — no exec/eval
+            condition_met = bool(_safe_eval_expression(expression, safe_builtins, {"data": input_data}))
         except Exception as e:
             logger.debug("Conditional expression evaluation failed: %s", e)
             condition_met = True
@@ -274,14 +430,14 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
     elif node_type == "transform":
         expression = node_data.get("expression", "data")
         try:
-            _validate_expression_ast(expression)
             safe_builtins = {
                 "len": len, "str": str, "int": int, "float": float,
                 "list": list, "dict": dict, "bool": bool,
-                "True": True, "False": False, "None": None
+                "True": True, "False": False, "None": None,
+                "json": __import__('json'),
             }
-            # Safe eval: AST validated above, restricted builtins deny __builtins__ escape
-            result = eval(expression, {"__builtins__": safe_builtins, "json": __import__('json')}, {"data": input_data})
+            # AST-walking expression evaluator — no exec/eval
+            result = _safe_eval_expression(expression, safe_builtins, {"data": input_data})
             return {"result": result}
         except Exception as e:
             return {"error": str(e)}
