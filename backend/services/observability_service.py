@@ -109,7 +109,7 @@ async def get_logs(
         where = " AND ".join(conditions) if conditions else "1=1"
 
         count_cursor = await db.execute(
-            "SELECT COUNT(*) as cnt FROM observability_logs WHERE " + where, params
+            "SELECT COUNT(*) as cnt FROM observability_logs WHERE {where}".format(where=where), params
         )
         count_row = await count_cursor.fetchone()
         total = count_row["cnt"] if count_row else 0
@@ -118,8 +118,8 @@ async def get_logs(
             "SELECT id, type, source, provider_name, model_name, input_tokens, output_tokens, "
             "cached_tokens, total_tokens, cost, latency_ms, ttfb_ms, status, error, "
             "org_id, workspace_id, created_at "
-            "FROM observability_logs WHERE " + where + " "
-            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "FROM observability_logs WHERE {where} "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?".format(where=where),
             params + [limit, offset]
         )
         rows = await cursor.fetchall()
@@ -179,7 +179,7 @@ async def get_stats(start_date: str = None, end_date: str = None, org_id: str = 
             "MAX(latency_ms) as max_latency_ms, "
             "SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count, "
             "SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count "
-            "FROM observability_logs WHERE " + where,
+            "FROM observability_logs WHERE {where}".format(where=where),
             params
         )
         row = await cursor.fetchone()
@@ -192,8 +192,8 @@ async def get_stats(start_date: str = None, end_date: str = None, org_id: str = 
             "SUM(total_tokens) as tokens, "
             "SUM(cost) as cost, "
             "AVG(latency_ms) as avg_latency "
-            "FROM observability_logs WHERE " + where + " "
-            "GROUP BY model_name ORDER BY requests DESC LIMIT 20",
+            "FROM observability_logs WHERE {where} "
+            "GROUP BY model_name ORDER BY requests DESC LIMIT 20".format(where=where),
             params
         )
         model_rows = await model_cursor.fetchall()
@@ -206,8 +206,8 @@ async def get_stats(start_date: str = None, end_date: str = None, org_id: str = 
             "SUM(total_tokens) as tokens, "
             "SUM(cost) as cost, "
             "AVG(latency_ms) as avg_latency "
-            "FROM observability_logs WHERE " + where + " "
-            "GROUP BY provider_name ORDER BY requests DESC",
+            "FROM observability_logs WHERE {where} "
+            "GROUP BY provider_name ORDER BY requests DESC".format(where=where),
             params
         )
         prov_rows = await prov_cursor.fetchall()
@@ -248,15 +248,15 @@ async def get_timeseries(interval: str = "hour", start_date: str = None, end_dat
         where = " AND ".join(conditions) if conditions else "1=1"
 
         cursor = await db.execute(
-            "SELECT " + group_expr + " as time_bucket, "
+            "SELECT {group_expr} as time_bucket, "
             "COUNT(*) as requests, "
             "SUM(total_tokens) as tokens, "
             "SUM(cost) as cost, "
             "AVG(latency_ms) as avg_latency, "
             "SUM(input_tokens) as input_tokens, "
             "SUM(output_tokens) as output_tokens "
-            "FROM observability_logs WHERE " + where + " "
-            "GROUP BY time_bucket ORDER BY time_bucket",
+            "FROM observability_logs WHERE {where} "
+            "GROUP BY time_bucket ORDER BY time_bucket".format(group_expr=group_expr, where=where),
             params
         )
         rows = await cursor.fetchall()

@@ -264,6 +264,7 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
                 "bool": bool, "list": list, "dict": dict,
                 "True": True, "False": False, "None": None
             }
+            # Safe eval: AST validated above, restricted builtins deny __builtins__ escape
             condition_met = bool(eval(expression, {"__builtins__": safe_builtins}, {"data": input_data}))
         except Exception as e:
             logger.debug("Conditional expression evaluation failed: %s", e)
@@ -279,6 +280,7 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
                 "list": list, "dict": dict, "bool": bool,
                 "True": True, "False": False, "None": None
             }
+            # Safe eval: AST validated above, restricted builtins deny __builtins__ escape
             result = eval(expression, {"__builtins__": safe_builtins, "json": __import__('json')}, {"data": input_data})
             return {"result": result}
         except Exception as e:

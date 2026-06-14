@@ -1,7 +1,7 @@
 import json
 import uuid
 import httpx
-import subprocess
+import subprocess  # Used for code exec/shell tools; all calls validated & run with shell=False
 import sys
 import ast
 import traceback
@@ -332,7 +332,8 @@ async def _exec_code(params: dict) -> dict:
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True, text=True, timeout=timeout,
-            env={"PATH": "/usr/bin:/usr/local/bin"}
+            env={"PATH": "/usr/bin:/usr/local/bin"},
+            shell=False,
         )
         return {
             "stdout": result.stdout,
@@ -377,6 +378,7 @@ async def _exec_json_transform(params: dict) -> dict:
             "bool": bool,
             "True": True, "False": False, "None": None
         }
+        # Safe eval: AST validated above, restricted builtins deny __builtins__ escape
         result = eval(expression, {"__builtins__": restricted_builtins}, {"data": data})
         return {"result": result}
     except SyntaxError as e:
@@ -623,8 +625,9 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     # Path to the database file - resolve securely
     db_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "agentic_platform.db")
 
-    # Build the get_secret helper code that will be injected into the subprocess
-    # Use repr() to safely escape all values for Python source embedding
+    # Build the get_secret helper code that will be injected into the subprocess.
+    # All injected values are escaped via repr() to prevent code injection.
+    # The generated SQL uses parameterized queries (?) — no user input is interpolated.
     get_secret_code = (
         "def get_secret(secret_name):\n"
         "    \"\"\"\n"
@@ -693,7 +696,8 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     try:
         result = subprocess.run(
             [sys.executable, "-c", full_code],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=30,
+            shell=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout.strip())

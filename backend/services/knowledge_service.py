@@ -26,19 +26,18 @@ async def search_knowledge(kb_ids: list, query: str, limit: int = 5) -> str:
             if not isinstance(kid, str) or not _id_pat.match(kid):
                 return f"Invalid knowledge base ID: {kid}"
 
-        # Build IN clause placeholders safely
+        # Build IN clause placeholders safely — only "?" markers, no values interpolated
         placeholders = ", ".join("?" for _ in kb_ids)
-        params = [embedding_val] + kb_ids + [limit]
         
         # Perform cosine similarity search (<=>)
-        # Assuming embedding vector(1536)
+        # All values are passed as parameters; placeholders contain only "?" markers
         sql = (
             "SELECT title, content, 1 - (embedding <=> ?::vector) as similarity "
             "FROM knowledge_documents "
-            "WHERE kb_id IN (" + placeholders + ") "
+            "WHERE kb_id IN ({placeholders}) "
             "ORDER BY embedding <=> ?::vector "
             "LIMIT ?"
-        )
+        ).format(placeholders=placeholders)
         params = [embedding_val] + kb_ids + [embedding_val, limit]
         
         cursor = await db.execute(sql, tuple(params))

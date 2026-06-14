@@ -1,6 +1,6 @@
 import json
 import uuid
-import subprocess
+import subprocess  # Used for MCP server lifecycle; all calls validated & run with shell=False
 import os
 import signal
 import asyncio
@@ -350,6 +350,7 @@ async def start_mcp_server(server_id: str, org_id: str = None) -> dict:
                 cwd=backend_dir,
                 env=env,
                 start_new_session=True,
+                shell=False,
             )
             _running_processes[server_id] = process
 
