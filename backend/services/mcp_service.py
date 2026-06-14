@@ -771,6 +771,9 @@ async def _db_tool(tool_name: str, params: dict) -> dict:
             await db.close()
     elif tool_name == "describe_table":
         table = params.get("table_name", "")
+        # Validate table name against safe pattern to prevent SQL injection
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table):
+            return {"error": "Invalid table name"}
         db = await aiosqlite.connect(db_path)
         db.row_factory = aiosqlite.Row
         try:
