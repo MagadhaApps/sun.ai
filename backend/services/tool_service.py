@@ -362,6 +362,8 @@ async def _exec_text_extract(params: dict) -> dict:
 
 async def _exec_calculator(params: dict) -> dict:
     import math
+    import ast
+    import operator
     expression = params.get("expression", "")
     safe_dict = {
         "abs": abs, "round": round, "min": min, "max": max, "sum": sum, "pow": pow,
@@ -369,8 +371,40 @@ async def _exec_calculator(params: dict) -> dict:
         "log": math.log, "log10": math.log10, "log2": math.log2, "pi": math.pi, "e": math.e,
         "ceil": math.ceil, "floor": math.floor, "factorial": math.factorial,
     }
+    _SAFE_OPERATORS = {
+        ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+        ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod, ast.Pow: operator.pow, ast.USub: operator.neg,
+        ast.UAdd: operator.pos,
+    }
+    def _safe_eval(node):
+        if isinstance(node, ast.Expression):
+            return _safe_eval(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BinOp):
+            op = _SAFE_OPERATORS.get(type(node.op))
+            if op is None:
+                raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+            return op(_safe_eval(node.left), _safe_eval(node.right))
+        if isinstance(node, ast.UnaryOp):
+            op = _SAFE_OPERATORS.get(type(node.op))
+            if op is None:
+                raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
+            return op(_safe_eval(node.operand))
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in safe_dict:
+                args = [_safe_eval(a) for a in node.args]
+                return safe_dict[node.func.id](*args)
+            raise ValueError(f"Unsupported function call: {ast.dump(node.func)}")
+        if isinstance(node, ast.Name):
+            if node.id in safe_dict:
+                return safe_dict[node.id]
+            raise ValueError(f"Unknown name: {node.id}")
+        raise ValueError(f"Unsupported expression node: {ast.dump(node)}")
     try:
-        result = eval(expression, {"__builtins__": {}}, safe_dict)
+        parsed = ast.parse(expression, mode='eval')
+        result = _safe_eval(parsed)
         return {"result": result, "expression": expression}
     except Exception as e:
         return {"error": f"Calculation failed: {str(e)}"}
@@ -444,8 +478,9 @@ async def _exec_shell(params: dict) -> dict:
     timeout = params.get("timeout", 30)
     cwd = params.get("cwd", ".")
     try:
+        import shlex
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            shlex.split(command), shell=False, capture_output=True, text=True, timeout=timeout, cwd=cwd
         )
         return {"stdout": result.stdout[:10000], "stderr": result.stderr[:5000], "return_code": result.returncode}
     except subprocess.TimeoutExpired:
@@ -538,10 +573,10 @@ def get_secret(secret_name):
     """
     import sqlite3
 
-    db_path = "{db_path}"
-    workspace_id = "{workspace_id}"
-    environment_id = "{environment_id}"
-    org_id = "{org_id}"
+    db_path = {repr(db_path)}
+    workspace_id = {repr(workspace_id)}
+    environment_id = {repr(environment_id)}
+    org_id = {repr(org_id)}
 
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()

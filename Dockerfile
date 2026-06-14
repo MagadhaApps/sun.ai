@@ -134,6 +134,10 @@ RUN chmod +x /app/start.sh
 # -----------------------------------------------------------------------------
 VOLUME /app/backend
 
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash sunnyai
+USER sunnyai
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV NEXT_PUBLIC_API_URL=http://localhost:8000/api

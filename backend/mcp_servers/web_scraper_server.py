@@ -44,6 +44,11 @@ def handle_request(method, params):
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AgenticPlatform/1.0"
         })
+        # Validate URL scheme to prevent file:// or other dangerous schemes
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return {"error": f"Unsupported URL scheme: {parsed.scheme}"}
         with urllib.request.urlopen(req, timeout=30) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
