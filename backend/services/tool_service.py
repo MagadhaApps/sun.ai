@@ -3,9 +3,13 @@ import uuid
 import httpx
 import subprocess
 import sys
+import ast
 import traceback
+import logging
 from datetime import datetime
 from database import get_db
+
+logger = logging.getLogger(__name__)
 
 BUILTIN_TOOLS = [
     {
@@ -336,8 +340,36 @@ async def _exec_json_transform(params: dict) -> dict:
     expression = params.get("expression", "data")
     try:
         data = json.loads(data_str)
-        result = eval(expression, {"__builtins__": {"len": len, "str": str, "int": int, "float": float, "list": list, "dict": dict, "sorted": sorted, "filter": filter, "map": map, "sum": sum, "min": min, "max": max, "enumerate": enumerate, "zip": zip, "range": range, "type": type, "isinstance": isinstance, "bool": bool, "True": True, "False": False, "None": None}}, {"data": data})
+        # Validate expression AST — only allow safe node types
+        _SAFE_AST_NODES = {
+            ast.Expression, ast.Constant, ast.Name, ast.Load, ast.BinOp, ast.UnaryOp,
+            ast.BoolOp, ast.Compare, ast.Call, ast.Attribute, ast.Subscript,
+            ast.List, ast.Tuple, ast.Dict, ast.Set, ast.ListComp, ast.DictComp,
+            ast.SetComp, ast.comprehension, ast.Slice, ast.Index,
+            ast.IfExp, ast.Num, ast.Str, ast.Bytes, ast.NameConstant,
+            ast.JoinedStr, ast.FormattedValue, ast.keyword, ast.arg,
+            ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow, ast.FloorDiv,
+            ast.MatMult, ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd,
+            ast.And, ast.Or, ast.Not, ast.Invert, ast.UAdd, ast.USub,
+            ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot,
+            ast.In, ast.NotIn
+        }
+        tree = ast.parse(expression, mode='eval')
+        for node in ast.walk(tree):
+            if type(node) not in _SAFE_AST_NODES:
+                return {"error": "Unsafe expression: forbidden construct"}
+        restricted_builtins = {
+            "len": len, "str": str, "int": int, "float": float,
+            "list": list, "dict": dict, "sorted": sorted, "filter": filter,
+            "map": map, "sum": sum, "min": min, "max": max,
+            "enumerate": enumerate, "zip": zip, "range": range, "type": type,
+            "isinstance": isinstance, "bool": bool,
+            "True": True, "False": False, "None": None
+        }
+        result = eval(expression, {"__builtins__": restricted_builtins}, {"data": data})
         return {"result": result}
+    except SyntaxError as e:
+        return {"error": f"Invalid expression syntax: {str(e)}"}
     except Exception as e:
         return {"error": f"Transform failed: {str(e)}"}
 
@@ -557,6 +589,12 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     workspace_id = context.get("workspace_id") or "default-workspace"
     environment_id = context.get("environment_id") or "default-env"
     org_id = context.get("org_id") or "default-org"
+
+    # Validate IDs to prevent injection via context
+    import re
+    _ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+    if not _ID_RE.match(workspace_id) or not _ID_RE.match(environment_id) or not _ID_RE.match(org_id):
+        return {"error": "Invalid context identifiers"}
 
     # Path to the database file
     db_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "agentic_platform.db")

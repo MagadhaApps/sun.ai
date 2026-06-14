@@ -488,8 +488,8 @@ async def _run_migrations(db):
     for table, column, col_type in migrations:
         try:
             await execute_query(db, f"ALTER TABLE {table} ADD COLUMN {column} {col_type}", fetch="execute")
-        except Exception:
-            pass  # Column may already exist (SQLite doesn't have IF NOT EXISTS for ALTER)
+        except Exception as e:
+            logger.debug("Column %s may already exist on table %s: %s", column, table, e)
 
     # Seed default org + environment + workspace and backfill existing rows
     now = datetime.utcnow().isoformat()
@@ -556,7 +556,8 @@ async def _run_migrations(db):
     await execute_query(db, "UPDATE workspaces SET env_id = ? WHERE env_id IS NULL", (DEFAULT_ENV_ID,), fetch="execute")
 
     # Backfill any rows missing workspace_id
-    for table in ["tools", "mcp_servers", "runbooks", "workflows", "agents", "conversations"]:
+    ALLOWED_BACKFILL_TABLES = {"tools", "mcp_servers", "runbooks", "workflows", "agents", "conversations"}
+    for table in ALLOWED_BACKFILL_TABLES:
         await execute_query(db, f"UPDATE {table} SET workspace_id = ? WHERE workspace_id IS NULL", (DEFAULT_WS_ID,), fetch="execute")
 
     # For providers, set org_id based on workspace's org_id, or default org
@@ -569,10 +570,9 @@ async def _run_migrations(db):
             ) WHERE org_id IS NULL AND workspace_id IS NOT NULL
         """, fetch="execute")
     except Exception as e:
-        logger.error(f"Provider inner update failed: {e}")
-        pass
+        logger.error("Provider inner update failed: %s", e)
         
-    await execute_query(db, f"UPDATE providers SET org_id = ? WHERE org_id IS NULL", (DEFAULT_ORG_ID,), fetch="execute")
+    await execute_query(db, "UPDATE providers SET org_id = ? WHERE org_id IS NULL", (DEFAULT_ORG_ID,), fetch="execute")
 
     await execute_query(
         db,
@@ -588,8 +588,8 @@ async def _run_migrations(db):
             "UPDATE secrets SET scope_type = 'workspace', scope_id = workspace_id WHERE scope_type IS NULL AND workspace_id IS NOT NULL",
             fetch="execute"
         )
-    except Exception:
-        pass  # Fresh DB may not have workspace_id column on secrets yet
+    except Exception as e:
+        logger.debug("Fresh DB may not have workspace_id column on secrets yet: %s", e)
 
     # Create indexes on migration-added columns (safe now that columns exist)
     migration_indexes = [
@@ -615,8 +615,8 @@ async def _run_migrations(db):
     for idx_sql in migration_indexes:
         try:
             await execute_query(db, idx_sql, fetch="execute")
-        except Exception:
-            pass  # Index may already exist (CREATE INDEX IF NOT EXISTS is used)
+        except Exception as e:
+            logger.debug("Index may already exist, skipping: %s", e)
 
 
 async def _seed_demo_agents_workflow():
