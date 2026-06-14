@@ -489,7 +489,7 @@ async def _run_migrations(db):
         try:
             await execute_query(db, f"ALTER TABLE {table} ADD COLUMN {column} {col_type}", fetch="execute")
         except Exception:
-            pass  # Column already exists
+            pass  # Column may already exist (SQLite doesn't have IF NOT EXISTS for ALTER)
 
     # Seed default org + environment + workspace and backfill existing rows
     now = datetime.utcnow().isoformat()
@@ -589,7 +589,7 @@ async def _run_migrations(db):
             fetch="execute"
         )
     except Exception:
-        pass  # Fresh DB doesn't have workspace_id column on secrets
+        pass  # Fresh DB may not have workspace_id column on secrets yet
 
     # Create indexes on migration-added columns (safe now that columns exist)
     migration_indexes = [
@@ -616,7 +616,7 @@ async def _run_migrations(db):
         try:
             await execute_query(db, idx_sql, fetch="execute")
         except Exception:
-            pass
+            pass  # Index may already exist (CREATE INDEX IF NOT EXISTS is used)
 
 
 async def _seed_demo_agents_workflow():

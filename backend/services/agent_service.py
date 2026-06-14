@@ -188,7 +188,7 @@ async def run_agent(agent_id: str, query: Any, conversation_id: str = None):
                 if content and isinstance(content, str) and content.startswith("["):
                     try:
                         content = json.loads(content)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         pass
                 
                 msg = {"role": r["role"], "content": content}
@@ -359,7 +359,7 @@ async def stream_agent(agent_id: str, query: Any, conversation_id: str = None):
                 if content and isinstance(content, str) and content.startswith("["):
                     try:
                         content = json.loads(content)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         pass
                         
                 msg = {"role": r["role"], "content": content}

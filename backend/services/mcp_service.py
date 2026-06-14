@@ -47,7 +47,7 @@ BUILTIN_MCP_SERVERS = [
         "description": "GitHub API integration - manage repos, issues, PRs, branches, and code search",
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": ""},
+        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")},
         "available_tools": [
             {"name": "list_repos", "description": "List repositories for a user or organization", "parameters": {"owner": "string"}},
             {"name": "list_issues", "description": "List issues in a repository", "parameters": {"repo": "string", "state": "string"}},
@@ -90,12 +90,12 @@ def _drain_pipe(pipe, server_id: str, pipe_name: str):
             # Optionally log output for debugging
             # print(f"[MCP {server_id}] {pipe_name}: {line.decode('utf-8', errors='replace').strip()}")
     except Exception:
-        pass
+        pass  # Drain threads are best-effort; process may already be dead
     finally:
         try:
             pipe.close()
         except Exception:
-            pass
+            pass  # Pipe may already be closed
 
 
 async def seed_builtin_mcp_servers():
@@ -289,7 +289,7 @@ async def discover_mcp_tools(server_id: str, org_id: str = None) -> dict:
                     except ProcessLookupError:
                         pass  # Process already exited
                 except Exception:
-                    pass  # Ignore other cleanup errors
+                    pass  # Ignore other cleanup errors during shutdown
     finally:
         await db.close()
 
@@ -349,7 +349,7 @@ async def start_mcp_server(server_id: str, org_id: str = None) -> dict:
                 process.stdin.write(_encode_mcp_ndjson(MCP_INITIALIZED_NOTIFICATION))
                 process.stdin.flush()
             except Exception:
-                pass  # best-effort; drain threads will handle any output
+                pass  # best-effort stdin write; drain threads will handle any output
 
             # Start background threads to drain stdout and stderr
             # This prevents buffer overflow which causes process hangs
@@ -390,8 +390,7 @@ async def stop_mcp_server(server_id: str) -> dict:
                 if process.stdin and not process.stdin.closed:
                     process.stdin.close()
             except Exception:
-                pass
-            # Terminate the process group (since we used start_new_session)
+                pass  # stdin may already be closed by the process
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             except (ProcessLookupError, OSError):
@@ -405,7 +404,7 @@ async def stop_mcp_server(server_id: str) -> dict:
                     process.kill()
             del _running_processes[server_id]
         except Exception:
-            pass
+            pass  # Process may already have been cleaned up
 
     # Clean up reader threads reference (they're daemon threads, so they'll die with process)
     if server_id in _output_readers:
@@ -617,9 +616,9 @@ async def _execute_via_mcp_subprocess(server_id: str, server: dict, tool_name: s
                         if not line:
                             break
                 except asyncio.CancelledError:
-                    pass
+                    pass  # Task was cancelled during shutdown
                 except Exception:
-                    pass
+                    pass  # Ignore other drain errors
 
             state["stderr_task"] = asyncio.create_task(_stderr_drain(process.stderr))
 

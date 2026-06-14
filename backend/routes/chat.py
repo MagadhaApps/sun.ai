@@ -329,7 +329,7 @@ async def get_messages(conv_id: str, x_user_email: str = Header(None)):
             if m.get("content") and isinstance(m["content"], str) and m["content"].startswith("["):
                 try:
                     m["content"] = json.loads(m["content"])
-                except:
+                except (json.JSONDecodeError, TypeError):
                     pass
                     
             messages.append(m)
