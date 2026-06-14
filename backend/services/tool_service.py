@@ -513,7 +513,8 @@ async def _exec_shell(params: dict) -> dict:
     try:
         import shlex
         result = subprocess.run(
-            shlex.split(command), shell=False, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            shlex.split(command), shell=False, capture_output=True, text=True, timeout=timeout, cwd=cwd,
+            env={"PATH": "/usr/bin:/usr/local/bin:/bin:/usr/sbin"}
         )
         return {"stdout": result.stdout[:10000], "stderr": result.stderr[:5000], "return_code": result.returncode}
     except subprocess.TimeoutExpired:
@@ -678,7 +679,8 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     try:
         result = subprocess.run(
             [sys.executable, "-c", full_code],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=30,
+            env={"PATH": "/usr/bin:/usr/local/bin", "PYTHONPATH": ""}
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout.strip())

@@ -133,6 +133,10 @@ def _eval_node(node, scope: dict):
     if isinstance(node, ast.Name):
         if node.id in scope:
             return scope[node.id]
+        # Fallback to __builtins__ (matching Python eval semantics)
+        builtins = scope.get("__builtins__")
+        if isinstance(builtins, dict) and node.id in builtins:
+            return builtins[node.id]
         raise ValueError(f"Unknown name: {node.id}")
 
     # ── binary operators ─────────────────────────────────────────
