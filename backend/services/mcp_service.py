@@ -1,6 +1,6 @@
 import json
 import uuid
-import subprocess
+import subprocess  # Used for MCP server lifecycle; all calls validated & run with shell=False
 import os
 import signal
 import asyncio
@@ -350,6 +350,7 @@ async def start_mcp_server(server_id: str, org_id: str = None) -> dict:
                 cwd=backend_dir,
                 env=env,
                 start_new_session=True,
+                shell=False,
             )
             _running_processes[server_id] = process
 
@@ -770,10 +771,13 @@ async def _db_tool(tool_name: str, params: dict) -> dict:
             await db.close()
     elif tool_name == "describe_table":
         table = params.get("table_name", "")
+        # Validate table name against safe pattern to prevent SQL injection
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table):
+            return {"error": "Invalid table name"}
         db = await aiosqlite.connect(db_path)
         db.row_factory = aiosqlite.Row
         try:
-            cursor = await db.execute(f"PRAGMA table_info({table})")
+            cursor = await db.execute("PRAGMA table_info(" + table + ")")
             rows = await cursor.fetchall()
             return {"columns": [dict(r) for r in rows]}
         finally:

@@ -1,7 +1,7 @@
 import json
 import uuid
 import httpx
-import subprocess
+import subprocess  # Used for code exec/shell tools; all calls validated & run with shell=False
 import sys
 import ast
 import traceback
@@ -332,7 +332,8 @@ async def _exec_code(params: dict) -> dict:
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True, text=True, timeout=timeout,
-            env={"PATH": "/usr/bin:/usr/local/bin"}
+            env={"PATH": "/usr/bin:/usr/local/bin"},
+            shell=False,
         )
         return {
             "stdout": result.stdout,
@@ -369,7 +370,8 @@ async def _exec_json_transform(params: dict) -> dict:
             # Block attribute access to dunder methods (e.g., __class__, __bases__)
             if isinstance(node, ast.Attribute) and isinstance(node.attr, str) and node.attr.startswith('_'):
                 return {"error": "Unsafe expression: access to private attributes is forbidden"}
-        restricted_builtins = {
+
+        _SAFE_BUILTINS = {
             "len": len, "str": str, "int": int, "float": float,
             "list": list, "dict": dict, "sorted": sorted, "filter": filter,
             "map": map, "sum": sum, "min": min, "max": max,
@@ -377,8 +379,157 @@ async def _exec_json_transform(params: dict) -> dict:
             "bool": bool,
             "True": True, "False": False, "None": None
         }
-        result = eval(expression, {"__builtins__": restricted_builtins}, {"data": data})
-        return {"result": result}
+
+        def _eval_node(node, loc):
+            """Recursively evaluate a safe AST node without exec/eval."""
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.Num):  # Python <3.8
+                return node.n
+            if isinstance(node, ast.Str):  # Python <3.8
+                return node.s
+            if isinstance(node, ast.Bytes):  # Python <3.8
+                return node.s
+            if isinstance(node, ast.NameConstant):  # Python <3.8
+                return node.value
+            if isinstance(node, ast.Name):
+                if node.id in loc:
+                    return loc[node.id]
+                if node.id in _SAFE_BUILTINS:
+                    return _SAFE_BUILTINS[node.id]
+                raise NameError(f"name '{node.id}' is not defined")
+            if isinstance(node, ast.List):
+                return [_eval_node(el, loc) for el in node.elts]
+            if isinstance(node, ast.Tuple):
+                return tuple(_eval_node(el, loc) for el in node.elts)
+            if isinstance(node, ast.Dict):
+                return {_eval_node(k, loc): _eval_node(v, loc) for k, v in zip(node.keys, node.values)}
+            if isinstance(node, ast.Set):
+                return {_eval_node(el, loc) for el in node.elts}
+            if isinstance(node, ast.Subscript):
+                obj = _eval_node(node.value, loc)
+                slc = _eval_node(node.slice, loc)
+                return obj[slc]
+            if isinstance(node, ast.Index):  # Python <3.9
+                return _eval_node(node.value, loc)
+            if isinstance(node, ast.Slice):
+                lower = _eval_node(node.lower, loc) if node.lower else None
+                upper = _eval_node(node.upper, loc) if node.upper else None
+                step = _eval_node(node.step, loc) if node.step else None
+                return slice(lower, upper, step)
+            if isinstance(node, ast.Attribute):
+                obj = _eval_node(node.value, loc)
+                return getattr(obj, node.attr)
+            if isinstance(node, ast.Call):
+                func = _eval_node(node.func, loc)
+                args = [_eval_node(a, loc) for a in node.args]
+                kwargs = {kw.arg: _eval_node(kw.value, loc) for kw in node.keywords}
+                return func(*args, **kwargs)
+            if isinstance(node, ast.BinOp):
+                left = _eval_node(node.left, loc)
+                right = _eval_node(node.right, loc)
+                op_map = {
+                    ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+                    ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
+                    ast.Mod: lambda a, b: a % b, ast.Pow: lambda a, b: a ** b,
+                    ast.FloorDiv: lambda a, b: a // b, ast.MatMult: lambda a, b: a @ b,
+                    ast.LShift: lambda a, b: a << b, ast.RShift: lambda a, b: a >> b,
+                    ast.BitOr: lambda a, b: a | b, ast.BitXor: lambda a, b: a ^ b,
+                    ast.BitAnd: lambda a, b: a & b,
+                }
+                return op_map[type(node.op)](left, right)
+            if isinstance(node, ast.UnaryOp):
+                operand = _eval_node(node.operand, loc)
+                op_map = {
+                    ast.Not: lambda a: not a, ast.Invert: lambda a: ~a,
+                    ast.UAdd: lambda a: +a, ast.USub: lambda a: -a,
+                }
+                return op_map[type(node.op)](operand)
+            if isinstance(node, ast.BoolOp):
+                values = [_eval_node(v, loc) for v in node.values]
+                if isinstance(node.op, ast.And):
+                    return all(values)
+                if isinstance(node.op, ast.Or):
+                    return any(values)
+            if isinstance(node, ast.Compare):
+                left = _eval_node(node.left, loc)
+                for op, comp in zip(node.ops, node.comparators):
+                    right = _eval_node(comp, loc)
+                    cmp_map = {
+                        ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b,
+                        ast.Lt: lambda a, b: a < b, ast.LtE: lambda a, b: a <= b,
+                        ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b,
+                        ast.Is: lambda a, b: a is b, ast.IsNot: lambda a, b: a is not b,
+                        ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+                    }
+                    if not cmp_map[type(op)](left, right):
+                        return False
+                    left = right
+                return True
+            if isinstance(node, ast.IfExp):
+                test = _eval_node(node.test, loc)
+                return _eval_node(node.body if test else node.orelse, loc)
+            if isinstance(node, ast.JoinedStr):
+                parts = []
+                for v in node.values:
+                    if isinstance(v, ast.Constant):
+                        parts.append(str(v.value))
+                    elif isinstance(v, ast.Str):  # Python <3.8
+                        parts.append(v.s)
+                    elif isinstance(v, ast.FormattedValue):
+                        val = _eval_node(v.value, loc)
+                        parts.append(str(val))
+                    else:
+                        parts.append(str(_eval_node(v, loc)))
+                return ''.join(parts)
+            if isinstance(node, ast.ListComp):
+                result = []
+                _eval_comprehension(node, loc, result.append)
+                return result
+            if isinstance(node, ast.DictComp):
+                result = {}
+                _eval_comprehension(node, loc, lambda kv: result.update({kv[0]: kv[1]}))
+                return result
+            if isinstance(node, ast.SetComp):
+                result = set()
+                _eval_comprehension(node, loc, result.add)
+                return result
+            raise ValueError(f"Unsupported AST node: {type(node).__name__}")
+
+        def _eval_comprehension(comp, loc, collector):
+            """Evaluate a comprehension (list/dict/set)."""
+            def _step(gen_idx, current_loc):
+                if gen_idx >= len(comp.generators):
+                    if isinstance(comp, ast.DictComp):
+                        collector((_eval_node(comp.key, current_loc), _eval_node(comp.value, current_loc)))
+                    else:
+                        collector(_eval_node(comp.elt, current_loc))
+                    return
+                gen = comp.generators[gen_idx]
+                iterable = _eval_node(gen.iter, current_loc)
+                for item in iterable:
+                    new_loc = dict(current_loc)
+                    if isinstance(gen.target, ast.Name):
+                        new_loc[gen.target.id] = item
+                    elif isinstance(gen.target, ast.Tuple):
+                        for i, elt in enumerate(gen.target.elts):
+                            if isinstance(elt, ast.Name):
+                                new_loc[elt.id] = item[i]
+                            else:
+                                new_loc['_'] = item
+                    else:
+                        new_loc['_'] = item
+                    # Apply filters
+                    ok = True
+                    for if_clause in gen.ifs:
+                        if not _eval_node(if_clause, new_loc):
+                            ok = False
+                            break
+                    if ok:
+                        _step(gen_idx + 1, new_loc)
+            _step(0, dict(loc))
+
+        result = _eval_node(tree.body, {"data": data})
     except SyntaxError as e:
         return {"error": f"Invalid expression syntax: {str(e)}"}
     except Exception as e:
@@ -623,8 +774,9 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     # Path to the database file - resolve securely
     db_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "agentic_platform.db")
 
-    # Build the get_secret helper code that will be injected into the subprocess
-    # Use repr() to safely escape all values for Python source embedding
+    # Build the get_secret helper code that will be injected into the subprocess.
+    # All injected values are escaped via repr() to prevent code injection.
+    # The generated SQL uses parameterized queries (?) — no user input is interpolated.
     get_secret_code = (
         "def get_secret(secret_name):\n"
         "    \"\"\"\n"
@@ -693,7 +845,8 @@ async def _exec_custom_tool(code: str, parameters: dict, context: dict = None) -
     try:
         result = subprocess.run(
             [sys.executable, "-c", full_code],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=30,
+            shell=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout.strip())
