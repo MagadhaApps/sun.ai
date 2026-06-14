@@ -131,28 +131,20 @@ async def update_mcp_server(server_id: str, update: MCPServerUpdate):
                     status_code=400,
                     detail="Built-in servers only allow env and config updates"
                 )
-            now = datetime.utcnow().isoformat()
-            _ALLOWED_FIELDS = {"env", "config", "description"}
-            field_values = {}
-            if update.env is not None:
-                field_values["env"] = json.dumps(update.env)
-            if update.config is not None:
-                field_values["config"] = json.dumps(update.config)
-            if update.description is not None:
-                field_values["description"] = update.description
-            if not field_values:
+            if update.env is None and update.config is None and update.description is None:
                 return {"id": server_id, "message": "nothing to update"}
-            field_values["updated_at"] = now
-            # Validate field names against allowlist before building SQL
-            allowed_fields = {"env", "config", "description", "updated_at"}
-            for k in field_values:
-                if k not in allowed_fields:
-                    raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
-            set_clause = ", ".join(f"{k} = ?" for k in field_values)
-            params = list(field_values.values()) + [server_id]
+            now = datetime.utcnow().isoformat()
             await db.execute(
-                f"UPDATE mcp_servers SET {set_clause} WHERE id = ?",
-                params
+                """UPDATE mcp_servers
+                   SET env = ?, config = ?, description = ?, updated_at = ?
+                   WHERE id = ?""",
+                (
+                    json.dumps(update.env) if update.env is not None else existing["env"],
+                    json.dumps(update.config) if update.config is not None else existing["config"],
+                    update.description if update.description is not None else existing["description"],
+                    now,
+                    server_id,
+                ),
             )
         else:
             now = datetime.utcnow().isoformat()

@@ -129,30 +129,33 @@ async def update_member(org_id: str, user_email: str, update: MemberUpdate, x_us
                 if owner_count['count'] <= 1:
                     raise HTTPException(status_code=400, detail="Cannot demote the last owner of the organization")
 
-        _ALLOWED_FIELDS = {"role", "status"}
-        field_values = {}
         if update.role:
             if update.role not in ['owner', 'admin', 'member', 'viewer']:
                 raise HTTPException(status_code=400, detail="Invalid role")
-            field_values["role"] = update.role
-        if update.status:
-            field_values["status"] = update.status
+        if update.status and update.status not in ['active', 'pending', 'inactive']:
+            raise HTTPException(status_code=400, detail="Invalid status")
             
-        if not field_values:
+        if not update.role and not update.status:
             return {"status": "success"}
+
+        # Fetch the current member row to preserve unchanged fields
+        cursor = await db.execute(
+            "SELECT * FROM organization_members WHERE org_id = ? AND user_email = ?", (org_id, user_email)
+        )
+        existing = await cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Member not found")
             
-        field_values["updated_at"] = now
-        # Validate field names against allowlist before building SQL
-        for k in field_values:
-            if k not in _ALLOWED_FIELDS and k != "updated_at":
-                raise HTTPException(status_code=400, detail=f"Invalid field: {k}")
-        set_clause = ", ".join(f"{k} = ?" for k in field_values)
-        values = list(field_values.values())
-        
-        query = f"UPDATE organization_members SET {set_clause} WHERE org_id = ? AND user_email = ?"
-        values.extend([org_id, user_email])
-        
-        await db.execute(query, tuple(values))
+        await db.execute(
+            "UPDATE organization_members SET role = ?, status = ?, updated_at = ? WHERE org_id = ? AND user_email = ?",
+            (
+                update.role if update.role else existing["role"],
+                update.status if update.status else existing["status"],
+                now,
+                org_id,
+                user_email,
+            ),
+        )
         await db.commit()
         return {"status": "success"}
     finally:
