@@ -348,27 +348,8 @@ async def _exec_json_transform(params: dict) -> dict:
     expression = params.get("expression", "data")
     try:
         data = json.loads(data_str)
-        # Validate expression AST — only allow safe node types
-        _SAFE_AST_NODES = {
-            ast.Expression, ast.Constant, ast.Name, ast.Load, ast.BinOp, ast.UnaryOp,
-            ast.BoolOp, ast.Compare, ast.Call, ast.Attribute, ast.Subscript,
-            ast.List, ast.Tuple, ast.Dict, ast.Set, ast.ListComp, ast.DictComp,
-            ast.SetComp, ast.comprehension, ast.Slice, ast.Index,
-            ast.IfExp, ast.Num, ast.Str, ast.Bytes, ast.NameConstant,
-            ast.JoinedStr, ast.FormattedValue, ast.keyword, ast.arg,
-            ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow, ast.FloorDiv,
-            ast.MatMult, ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd,
-            ast.And, ast.Or, ast.Not, ast.Invert, ast.UAdd, ast.USub,
-            ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot,
-            ast.In, ast.NotIn
-        }
-        tree = ast.parse(expression, mode='eval')
-        for node in ast.walk(tree):
-            if type(node) not in _SAFE_AST_NODES:
-                return {"error": "Unsafe expression: forbidden construct"}
-            # Block attribute access to dunder methods (e.g., __class__, __bases__)
-            if isinstance(node, ast.Attribute) and isinstance(node.attr, str) and node.attr.startswith('_'):
-                return {"error": "Unsafe expression: access to private attributes is forbidden"}
+        # Use the safe AST-walking evaluator (no eval)
+        from services.safe_eval import safe_eval
         restricted_builtins = {
             "len": len, "str": str, "int": int, "float": float,
             "list": list, "dict": dict, "sorted": sorted, "filter": filter,
@@ -377,7 +358,11 @@ async def _exec_json_transform(params: dict) -> dict:
             "bool": bool,
             "True": True, "False": False, "None": None
         }
-        result = eval(expression, {"__builtins__": restricted_builtins}, {"data": data})
+        result = safe_eval(
+            expression,
+            {"__builtins__": restricted_builtins},
+            {"data": data}
+        )
         return {"result": result}
     except SyntaxError as e:
         return {"error": f"Invalid expression syntax: {str(e)}"}

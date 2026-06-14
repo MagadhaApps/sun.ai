@@ -258,13 +258,13 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
     elif node_type == "conditional":
         expression = node_data.get("expression", "true")
         try:
-            _validate_expression_ast(expression)
+            from services.safe_eval import safe_eval
             safe_builtins = {
                 "len": len, "str": str, "int": int, "float": float,
                 "bool": bool, "list": list, "dict": dict,
                 "True": True, "False": False, "None": None
             }
-            condition_met = bool(eval(expression, {"__builtins__": safe_builtins}, {"data": input_data}))
+            condition_met = bool(safe_eval(expression, {"__builtins__": safe_builtins}, {"data": input_data}))
         except Exception as e:
             logger.debug("Conditional expression evaluation failed: %s", e)
             condition_met = True
@@ -273,13 +273,13 @@ async def _execute_node(node_type: str, node_data: dict, input_data: dict) -> di
     elif node_type == "transform":
         expression = node_data.get("expression", "data")
         try:
-            _validate_expression_ast(expression)
+            from services.safe_eval import safe_eval
             safe_builtins = {
                 "len": len, "str": str, "int": int, "float": float,
                 "list": list, "dict": dict, "bool": bool,
                 "True": True, "False": False, "None": None
             }
-            result = eval(expression, {"__builtins__": safe_builtins, "json": __import__('json')}, {"data": input_data})
+            result = safe_eval(expression, {"__builtins__": safe_builtins, "json": __import__('json')}, {"data": input_data})
             return {"result": result}
         except Exception as e:
             return {"error": str(e)}
