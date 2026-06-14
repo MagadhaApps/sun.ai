@@ -777,7 +777,7 @@ async def _db_tool(tool_name: str, params: dict) -> dict:
         db = await aiosqlite.connect(db_path)
         db.row_factory = aiosqlite.Row
         try:
-            cursor = await db.execute(f"PRAGMA table_info({table})")
+            cursor = await db.execute("PRAGMA table_info(" + table + ")")
             rows = await cursor.fetchall()
             return {"columns": [dict(r) for r in rows]}
         finally:
